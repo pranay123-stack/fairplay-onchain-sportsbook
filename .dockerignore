@@ -1,0 +1,13 @@
+**/node_modules
+**/.next
+**/dist
+**/out
+**/cache
+**/broadcast
+**/test-results
+**/playwright-report
+.fairplay
+.env
+packages/contracts/deployments/*.json
+apps/api/src/generated
+.git

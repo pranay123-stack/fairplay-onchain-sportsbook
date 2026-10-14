@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Toolchain pins: Foundry v1.5.1 · Node 22 · pnpm 9.15.9 · Postgres 16 · Playwright (from the lockfile).
+# Dependencies install with --frozen-lockfile. No repository secrets are required: everything runs against
+# a local Anvil chain with its PUBLIC development keys (created by `pnpm env:init`).
+
+jobs:
+  contracts:
+    name: Contracts (Foundry)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+      - name: Build
+        working-directory: packages/contracts
+        run: forge build --sizes
+      - name: Unit, fuzz, reentrancy and invariant tests (deep CI profile)
+        working-directory: packages/contracts
+        env:
+          FOUNDRY_PROFILE: ci
+        run: forge test -vv
+
+  typescript:
+    name: TypeScript (typecheck, unit, integration, web build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fairplay
+          POSTGRES_PASSWORD: fairplay
+          POSTGRES_DB: fairplay_test
+        ports: ["5482:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fairplay" --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cd packages/contracts && forge build
+      - run: cd apps/api && npx prisma generate
+      - name: Generated ABIs are up to date
+        run: pnpm abi && git diff --exit-code packages/shared/src/abi
+      - run: pnpm typecheck
+      - run: pnpm --filter @fairplay/shared test
+      - name: API integration tests (real Anvil + real Postgres)
+        run: pnpm --filter @fairplay/api test
+        env:
+          TEST_DATABASE_URL: postgresql://fairplay:fairplay@127.0.0.1:5482/fairplay_test
+      - name: Build the web app
+        run: pnpm --filter @fairplay/web build
+
+  e2e:
+    name: End-to-end (Playwright, full stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: [contracts, typescript]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fairplay
+          POSTGRES_PASSWORD: fairplay
+          POSTGRES_DB: fairplay
+        ports: ["5482:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fairplay" --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm env:init
+      - name: Deploy + seed the demo (starts Anvil)
+        run: pnpm demo:setup
+      - run: pnpm --filter @fairplay/web build
+      - name: Start API and web
+        run: |
+          (cd apps/api && nohup npx tsx --env-file=../../.env src/main.ts > ../../api.log 2>&1 &)
+          (cd apps/web && nohup npx next start --port 3600 > ../../web.log 2>&1 &)
+          npx --yes wait-on@8 -t 120000 http://127.0.0.1:4600/api/health http://localhost:3600
+      - run: cd apps/web && npx playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Scripted 3-minute demo workflow
+        run: pnpm demo:flow
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            api.log
+            web.log
+            apps/web/test-results
+            apps/web/playwright-report

@@ -1,0 +1,255 @@
+// FairPlay read model + metadata store.
+//
+// THE BLOCKCHAIN IS AUTHORITATIVE. Every column marked [chain] is a projection of contract events written
+// only by the indexer, and is rebuilt from `ChainLog` after a reorganisation. Columns marked [meta] are
+// off-chain presentation metadata (team names, rules text) linked to on-chain objects by a bytes32 `ref`.
+// Nothing in this database can change who owns a bet or how it settles.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  address     String   @id // lower-case 0x address
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  bets        BetIndex[]
+}
+
+model Event {
+  id           String   @id @default(uuid())
+  ref          String   @unique // [meta↔chain] bytes32 passed to createEvent
+  onchainId    Int?     @unique // [chain]
+  sport        String // [meta]
+  league       String // [meta]
+  homeTeam     String // [meta]
+  awayTeam     String // [meta]
+  venue        String?
+  description  String?
+  startTime    DateTime // [chain] once indexed
+  featured     Boolean  @default(false)
+  isDemo       Boolean  @default(true)
+  createTxHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  markets      Market[]
+
+  @@index([startTime])
+}
+
+model Market {
+  id             String    @id @default(uuid())
+  ref            String    @unique // [meta↔chain] bytes32 passed to createMarket
+  onchainId      Int?      @unique // [chain]
+  eventId        String
+  event          Event     @relation(fields: [eventId], references: [id])
+  type           String // [meta]
+  title          String // [meta]
+  rules          String // [meta]
+  featured       Boolean   @default(false)
+  simulateOdds   Boolean   @default(false) // [meta] opt-in to the simulated odds engine
+  status         String    @default("DRAFT") // [chain] PENDING|OPEN|CLOSED|SETTLED|CANCELLED, DRAFT before indexing
+  outcomeCount   Int
+  closeTime      DateTime
+  feeBps         Int       @default(0) // [chain]
+  minStake       Decimal   @default(0) @db.Decimal(78, 0) // [chain]
+  maxStake       Decimal   @default(0) @db.Decimal(78, 0) // [chain]
+  maxLiability   Decimal   @default(0) @db.Decimal(78, 0) // [chain]
+  totalStake     Decimal   @default(0) @db.Decimal(78, 0) // [chain]
+  reserved       Decimal   @default(0) @db.Decimal(78, 0) // [chain]
+  oddsVersion    Int       @default(0) // [chain]
+  questionId     String?   @unique // [chain]
+  winningOutcome Int? // [chain]
+  settledAt      DateTime? // [chain]
+  createTxHash   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  outcomes       Outcome[]
+  oddsHistory    OddsHistory[]
+  bets           BetIndex[]
+
+  @@index([eventId])
+  @@index([status])
+}
+
+model Outcome {
+  id          String  @id @default(uuid())
+  marketId    String
+  market      Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  index       Int
+  label       String // [meta]
+  odds        Decimal @db.Decimal(78, 0) // [chain] executable odds (1e4)
+  stake       Decimal @default(0) @db.Decimal(78, 0) // [chain] aggregate
+  grossPayout Decimal @default(0) @db.Decimal(78, 0) // [chain] aggregate
+  betCount    Int     @default(0) // [chain] aggregate
+
+  @@unique([marketId, index])
+}
+
+model BetIndex {
+  betId           Int       @id // [chain] contract bet id
+  marketOnchainId Int
+  marketId        String?
+  market          Market?   @relation(fields: [marketId], references: [id])
+  bettor          String
+  user            User      @relation(fields: [bettor], references: [address])
+  outcomeIndex    Int
+  stake           Decimal   @db.Decimal(78, 0)
+  odds            Decimal   @db.Decimal(78, 0) // locked at placement
+  potentialPayout Decimal   @db.Decimal(78, 0)
+  claimed         Boolean   @default(false)
+  refund          Boolean?
+  payoutAmount    Decimal?  @db.Decimal(78, 0)
+  placedTxHash    String
+  placedBlock     Int
+  placedAt        DateTime
+  claimTxHash     String?
+  claimedAt       DateTime?
+
+  @@index([bettor])
+  @@index([marketOnchainId])
+}
+
+model OddsHistory {
+  id          String    @id @default(uuid())
+  marketId    String
+  market      Market    @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  odds        String[] // 1e4 fixed-point decimal strings
+  version     Int? // [chain] contract oddsVersion once confirmed
+  status      String // PENDING | CONFIRMED | FAILED
+  source      String // initial | simulated-engine | admin | external
+  txHash      String?
+  blockNumber Int?
+  error       String?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  @@index([marketId, createdAt])
+  @@index([txHash])
+}
+
+/// Every transaction the backend submitted (operator / oracle services), with its observed outcome.
+model Transaction {
+  hash        String    @id
+  kind        String // CREATE_EVENT | CREATE_MARKET | OPEN_MARKET | SET_ODDS | CLOSE_MARKET | REPORT_RESULT | ...
+  service     String // operator | oracle
+  from        String
+  to          String
+  status      String // SUBMITTED | CONFIRMED | REVERTED | TIMEOUT
+  blockNumber Int?
+  marketId    String?
+  error       String?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  @@index([createdAt])
+}
+
+model Settlement {
+  marketOnchainId  Int       @id // [chain]
+  kind             String // SETTLED | CANCELLED
+  winningOutcome   Int?
+  totalStake       Decimal   @db.Decimal(78, 0)
+  winnersPayout    Decimal   @db.Decimal(78, 0)
+  fees             Decimal   @db.Decimal(78, 0)
+  houseDelta       Decimal   @db.Decimal(78, 0) // signed
+  oracleReporter   String?
+  resultReportedAt DateTime?
+  reason           String?
+  txHash           String
+  blockNumber      Int
+  at               DateTime
+}
+
+/// [chain] Every ResultReported event from the oracle adapter (corrections appear as further rows).
+model OracleReport {
+  id             String   @id @default(uuid())
+  questionId     String
+  status         String // RESOLVED | CANCELLED
+  winningOutcome Int?
+  reporter       String
+  reportedAt     DateTime
+  finalAt        DateTime
+  source         String
+  txHash         String
+  blockNumber    Int
+  logIndex       Int
+
+  @@unique([txHash, logIndex])
+  @@index([questionId])
+}
+
+/// Raw, decoded contract logs — the indexer's source of truth for rebuilding every projection.
+model ChainLog {
+  id          String   @id @default(uuid())
+  blockNumber Int
+  blockHash   String
+  txHash      String
+  logIndex    Int
+  address     String
+  contract    String // BettingMarket | MockOracleAdapter
+  eventName   String
+  args        Json
+  timestamp   DateTime
+
+  @@unique([txHash, logIndex])
+  @@index([blockNumber])
+  @@index([eventName])
+}
+
+/// Hashes of processed blocks, used to detect reorganisations.
+model IndexedBlock {
+  number     Int    @id
+  hash       String
+  parentHash String
+}
+
+model IndexerState {
+  id          String   @id // "main"
+  chainId     Int
+  contract    String // BettingMarket address the state belongs to
+  lastBlock   Int
+  reorgs      Int      @default(0)
+  updatedAt   DateTime @updatedAt
+}
+
+model AuthNonce {
+  nonce     String    @id
+  address   String
+  purpose   String // login | action
+  message   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([address])
+}
+
+model AdminSession {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  address   String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model AdminAuditLog {
+  id        String   @id @default(uuid())
+  address   String
+  action    String
+  target    String?
+  params    Json
+  txHash    String?
+  outcome   String // OK | FAILED | DENIED
+  error     String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

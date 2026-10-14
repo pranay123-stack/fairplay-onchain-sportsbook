@@ -1,0 +1,35 @@
+{
+  "name": "fairplay",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FairPlay — provably fair (transparently settled) Web3 sports betting MVP. Testnet tokens only.",
+  "packageManager": "pnpm@9.15.9",
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "contracts:build": "cd packages/contracts && forge build",
+    "contracts:test": "cd packages/contracts && forge test",
+    "abi": "pnpm --filter @fairplay/shared gen:abi",
+    "db:up": "docker compose up -d postgres",
+    "dev:chain": "anvil --port 8565 --block-time 1 --chain-id 31337",
+    "dev:api": "pnpm --filter @fairplay/api dev",
+    "dev:web": "pnpm --filter @fairplay/web dev",
+    "env:init": "tsx scripts/env-init.ts",
+    "demo:setup": "tsx scripts/demo-setup.ts",
+    "demo:flow": "tsx scripts/demo-flow.ts",
+    "sepolia": "tsx scripts/sepolia.ts",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r typecheck",
+    "test": "pnpm contracts:test && pnpm -r test",
+    "test:e2e": "pnpm --filter @fairplay/web test:e2e"
+  },
+  "dependencies": {
+    "@fairplay/shared": "workspace:*",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.3",
+    "@types/node": "^22.18.12",
+    "viem": "^2.57.5"
+  }
+}

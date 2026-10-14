@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* FairPlay design tokens — deep charcoal surfaces, restrained emerald accent. */
+@theme {
+  --color-bg: #0a0c0f;
+  --color-surface: #111418;
+  --color-surface-2: #161a20;
+  --color-surface-3: #1c2129;
+  --color-line: #232932;
+  --color-line-strong: #2f3641;
+  --color-fg: #f4f6f8;
+  --color-muted: #8b94a3;
+  --color-faint: #5d6573;
+  --color-accent: #10b981;
+  --color-accent-bright: #34d399;
+  --color-accent-dim: #0b3b2c;
+  --color-warn: #f5b041;
+  --color-warn-dim: #3a2c10;
+  --color-danger: #f0616d;
+  --color-danger-dim: #3b161a;
+  --color-info: #6aa9ff;
+  --color-info-dim: #13243d;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --radius-card: 14px;
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px -12px rgb(0 0 0 / 0.6);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::selection {
+    background: rgb(16 185 129 / 0.35);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility hairline {
+  border-color: var(--color-line);
+}
+
+/* Subtle grid backdrop for the hero only. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 30%, transparent 75%);
+}

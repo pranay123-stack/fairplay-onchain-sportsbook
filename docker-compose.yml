@@ -1,0 +1,77 @@
+# FairPlay — one-command local demo:   docker compose up --build
+#   chain (Anvil) → setup (deploy + seed + index) → api (+ indexer/keeper/odds engine) → web
+# Only Anvil's PUBLIC development keys are used. Testnet tokens only — nothing here has value.
+# Uses the same host ports as the non-Docker dev setup (8565, 5482, 4600, 3600): run one or the other.
+name: fairplay
+
+x-app: &app
+  image: fairplay-app:local
+  env_file: .env.docker
+  volumes:
+    - deployments:/app/packages/contracts/deployments
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fairplay-postgres
+    environment:
+      POSTGRES_USER: fairplay
+      POSTGRES_PASSWORD: fairplay
+      POSTGRES_DB: fairplay
+    ports:
+      - "127.0.0.1:5482:5432"
+    volumes:
+      - fairplay-pg:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fairplay -d fairplay"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  chain:
+    image: ghcr.io/foundry-rs/foundry:v1.5.1
+    container_name: fairplay-anvil
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337", "--block-time", "1"]
+    ports:
+      - "127.0.0.1:8565:8545"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  setup:
+    <<: *app
+    build:
+      context: .
+      dockerfile: infrastructure/docker/app.Dockerfile
+    container_name: fairplay-setup
+    command: ["npx", "tsx", "scripts/demo-setup.ts"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      chain: { condition: service_healthy }
+
+  api:
+    <<: *app
+    container_name: fairplay-api
+    working_dir: /app/apps/api
+    command: ["npx", "tsx", "src/main.ts"]
+    ports:
+      - "127.0.0.1:4600:4600"
+    depends_on:
+      setup: { condition: service_completed_successfully }
+
+  web:
+    <<: *app
+    container_name: fairplay-web
+    working_dir: /app/apps/web
+    command: ["npx", "next", "start", "--port", "3600", "--hostname", "0.0.0.0"]
+    ports:
+      - "127.0.0.1:3600:3600"
+    depends_on:
+      api: { condition: service_started }
+
+volumes:
+  fairplay-pg:
+  deployments:
