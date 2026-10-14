@@ -15,9 +15,6 @@ import { join } from "node:path";
 import pg from "pg";
 import { type Hex, maxUint256 } from "viem";
 import { bettingMarketAbi, DEV_ACCOUNTS, mockUsdcAbi, parseOdds, parseUsdc } from "@fairplay/shared";
-import { createContext } from "../apps/api/src/bootstrap.ts";
-import { loadEnv } from "../apps/api/src/env.ts";
-import { createLogger } from "../apps/api/src/logger.ts";
 import { API_DIR, clients, CONTRACTS_DIR, loadDotEnv, ROOT, rpcAlive, run, sleep, startAnvil, STATE_DIR, step } from "./lib/local.ts";
 
 const TOTAL = 9;
@@ -211,6 +208,11 @@ async function main() {
   await client.end();
   console.log(`  truncated ${rows.length} tables`);
 
+  // Imported only now: the API code depends on the Prisma client generated in step 3, which does not exist
+  // yet on a fresh clone (a static import would crash before any step ran).
+  const { createContext } = await import("../apps/api/src/bootstrap.ts");
+  const { loadEnv } = await import("../apps/api/src/env.ts");
+  const { createLogger } = await import("../apps/api/src/logger.ts");
   const env = loadEnv({ DEPLOYMENT_FILE: deploymentFile, LOG_LEVEL: "warn" });
   const log = createLogger("warn", false);
   const ctx = createContext(env, log);
